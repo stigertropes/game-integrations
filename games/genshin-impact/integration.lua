@@ -332,7 +332,7 @@ function v1_game_get_launch_options(game_path, addons_path, edition)
   return {
     ["executable"]  = executable[edition],
     ["options"]     = {},
-    ["environment"] = {}
+    ["environment"] = { ["ENABLE_VKBASALT"] = "1" }
   }
 end
 

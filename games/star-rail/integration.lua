@@ -399,7 +399,7 @@ function v1_game_get_launch_options(game_path, addons_path, edition)
       "'Z:\\" .. game_path .. "/StarRail.exe'",
       "--"
     },
-    ["environment"] = {}
+    ["environment"] = { ["ENABLE_VKBASALT"] = "1" }
   }
 end
 
