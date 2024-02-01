@@ -39,6 +39,24 @@ local function social_api(edition)
   return social_api_cache[edition]
 end
 
+local fpsunlock_download = nil
+
+local function get_fpsunlock_download()
+  local uri = "https://codeberg.org/api/v1/repos/mkrsym1/fpsunlock/releases/latest"
+
+  if not fpsunlock_download then
+    local response = v1_network_fetch(uri)
+
+    if not response["ok"] then
+      error("Failed to request fpsunlock releases (code " .. response["status"] .. "): " .. response["statusText"])
+    end
+
+    fpsunlock_download = response.json()
+  end
+
+  return fpsunlock_download
+end
+
 local function get_hdiff(edition)
   local uri = {
     ["global"] = "https://github.com/an-anime-team/anime-game-core/raw/main/external/hpatchz/hpatchz",
@@ -329,8 +347,24 @@ function v1_game_get_launch_options(game_path, addons_path, edition)
     ["china"]  = "YuanShen.exe"
   }
 
+  local exe = executable[edition]
+  local fpsunlock = io.open(addons_path .. "/extra/fpsunlock/fpsunlock.exe", "rb") ~= nil
+  if fpsunlock then
+    local file = io.open("/tmp/launch.bat", "w+")
+
+    file:write("Z:\n")
+    file:write('cd "' .. game_path .. '"\n')
+    file:write("start " .. executable[edition] .. " %*\n")
+    if fpsunlock then
+      file:write('cd "' .. addons_path .. '/extra/fpsunlock"\n')
+      file:write("start fpsunlock.exe 144\n")
+    end
+    file:close()
+    exe = "/tmp/launch.bat"
+  end
+
   return {
-    ["executable"]  = executable[edition],
+    ["executable"]  = exe,
     ["options"]     = {},
     ["environment"] = { ["ENABLE_VKBASALT"] = "1" }
   }
@@ -407,11 +441,26 @@ function v1_addons_get_list(edition)
     })
   end
 
+  local fpsunlock = get_fpsunlock_download()
+
   return {
     {
       ["name"]   = "voiceovers",
       ["title"]  = "Voiceovers",
       ["addons"] = voiceovers
+    },
+    {
+      ["name"] = "extra",
+      ["title"] = "Extra",
+      ["addons"] = {
+        {
+          ["type"] = "component",
+          ["name"] = "fpsunlock",
+          ["title"] = "FPS Unlock",
+          ["version"] = fpsunlock["tag_name"],
+          ["required"] = false
+        }
+      }
     }
   }
 end
@@ -420,6 +469,8 @@ end
 function v1_addons_is_installed(group_name, addon_name, addon_path, edition)
   if group_name == "voiceovers" then
     return io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/1001.pck", "rb") ~= nil
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    return io.open(addon_path .. "/fpsunlock.exe", "rb") ~= nil
   end
 
   return false
@@ -427,12 +478,16 @@ end
 
 -- Get installed addon version
 function v1_addons_get_version(group_name, addon_name, addon_path, edition)
-  if group_name == "voiceovers" then
-    local version = io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/.version", "r")
+  local version = nil
 
-    if version ~= nil then
-      return version:read("*all")
-    end
+  if group_name == "voiceovers" then
+    version = io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/.version", "r")
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    version = io.open(addon_path .. "/.version", "r")
+  end
+
+  if version ~= nil then
+    return version:read("*all")
   end
 
   return nil
@@ -457,6 +512,25 @@ function v1_addons_get_download(group_name, addon_name, edition)
         }
       end
     end
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    local fpsunlock_download = get_fpsunlock_download()
+    local files = {}
+    table.insert(files, {
+      ["path"] = "fpsunlock.exe",
+      ["uri"] = fpsunlock_download["assets"][1]["browser_download_url"],
+      ["size"] = fpsunlock_download["assets"][1]["size"]
+    })
+
+    return {
+      ["version"] = fpsunlock_download["tag_name"],
+      ["edition"] = edition,
+
+      ["download"] = {
+        ["type"] = "files",
+        ["size"] = fpsunlock_download["assets"][1]["size"],
+        ["files"] = files
+      }
+    }
   end
 
   return nil
@@ -470,23 +544,23 @@ function v1_addons_get_diff(group_name, addon_name, addon_path, edition)
     return nil
   end
 
-  local game_data = game_api(edition)["data"]["game"]
+  if group_name == "voiceovers" then
+    local game_data = game_api(edition)["data"]["game"]
 
-  local latest_info = game_data["latest"]
-  local diffs = game_data["diffs"]
+    local latest_info = game_data["latest"]
+    local diffs = game_data["diffs"]
 
-  -- It should be impossible to have higher installed version
-  -- but just in case I have to cover this case as well
-  if compare_versions(installed_version, latest_info["version"]) ~= -1 then
-    return {
-      ["current_version"] = installed_version,
-      ["latest_version"]  = latest_info["version"],
+    -- It should be impossible to have higher installed version
+    -- but just in case I have to cover this case as well
+    if compare_versions(installed_version, latest_info["version"]) ~= -1 then
+      return {
+        ["current_version"] = installed_version,
+        ["latest_version"] = latest_info["version"],
 
-      ["edition"] = edition,
-      ["status"]  = "latest"
-    }
-  else
-    if group_name == "voiceovers" then
+        ["edition"] = edition,
+        ["status"]  = "latest"
+      }
+    else
       for _, diff in pairs(diffs) do
         if diff["version"] == installed_version then
           for _, package in pairs(diff["voice_packs"]) do
@@ -519,6 +593,32 @@ function v1_addons_get_diff(group_name, addon_name, addon_path, edition)
         ["status"]  = "unavailable"
       }
     end
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    local fpsunlock_download = get_fpsunlock_download()
+
+    if compare_versions(installed_version, fpsunlock_download["tag_name"]) ~= -1 then
+      return {
+        ["current_version"] = installed_version,
+        ["latest_version"] = fpsunlock_download["tag_name"],
+
+        ["edition"] = edition,
+        ["status"] = "latest"
+      }
+    else
+      local fpsunlock_download = v1_addons_get_download(group_name, addon_name, edition)
+
+      if fpsunlock_download ~= nil then
+        return {
+          ["current_version"] = installed_version,
+          ["latest_version"] = fpsunlock_download["tag_name"],
+
+          ["edition"] = edition,
+          ["status"] = "outdated",
+
+          ["diff"] = fpsunlock_download["download"]
+        }
+      end
+    end
   end
 end
 
@@ -528,6 +628,10 @@ function v1_addons_get_paths(group_name, addon_name, addon_path, edition)
     return {
       addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name),
       addon_path .. "/Audio_" .. get_voiceover_folder(addon_name) .. "_pkg_version"
+    }
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    return {
+      addon_path
     }
   end
 
@@ -646,6 +750,9 @@ function v1_addons_diff_transition(group_name, addon_name, addon_path, edition)
   if group_name == "voiceovers" then
     version = v1_addons_get_version(group_name, addon_name, addon_path, edition) or game_api(edition)["data"]["game"]["latest"]["version"]
     file = io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/.version", "w+")
+  elseif group_name == "extra" and addon_name == "fpsunlock" then
+    file = io.open(addon_path .. "/.version", "w+")
+    version = get_fpsunlock_download()["tag_name"]
   end
 
   if file ~= nil and version ~= nil then
