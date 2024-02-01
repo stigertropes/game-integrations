@@ -41,6 +41,7 @@ end
 
 local jadeite_metadata = nil
 local jadeite_download = nil
+local srmi_download = nil
 
 local function get_jadeite_metadata()
   local uris = {
@@ -79,6 +80,25 @@ local function get_jadeite_download()
   end
 
   return jadeite_download
+end
+
+local function get_srmi_download()
+  local uri = "https://api.github.com/repos/SilentNightSound/SR-Model-Importer/releases/latest"
+  local headers = {
+    ["User-Agent"] = "request"
+  }
+
+  if not srmi_download then
+    local response = v1_network_fetch(uri, { ["headers"] = headers })
+
+    if not response["ok"] then
+      error("Failed to request srmi releases (code " .. response["status"] .. "): " .. response["statusText"])
+    end
+
+    srmi_download = response.json()
+  end
+
+  return srmi_download
 end
 
 local function get_hdiff(edition)
@@ -393,6 +413,22 @@ end
 
 -- Get game launching options
 function v1_game_get_launch_options(game_path, addons_path, edition)
+  local srmi = io.open(addons_path .. "/extra/srmi/3dmigoto/W11Loader.exe", "rb") ~= nil
+  if srmi then
+    local file = io.open("/tmp/launch.bat", "w+")
+
+    file:write("Z:\n")
+    file:write('cd "' .. addons_path .. '/extra/srmi/3dmigoto"\n')
+    file:write('start "" "W11Loader.exe"\n')
+    file:write('cd "' .. addons_path .. '/extra/jadeite"\n')
+    file:write("start jadeite.exe Z:\\" .. game_path .. "/StarRail.exe -- %*\n")
+    file:close()
+    return {
+      ["executable"] = "/tmp/launch.bat",
+      ["options"] = {},
+      ["environment"] = { ["ENABLE_VKBASALT"] = "1" }
+    }
+  end
   return {
     ["executable"] = addons_path .. "/extra/jadeite/jadeite.exe",
     ["options"] = {
@@ -469,6 +505,7 @@ function v1_addons_get_list(edition)
   end
 
   local jadeite = get_jadeite_metadata()
+  local srmi = get_srmi_download()
 
   return {
     {
@@ -486,6 +523,13 @@ function v1_addons_get_list(edition)
           ["title"]    = "Jadeite",
           ["version"]  = jadeite["jadeite"]["version"],
           ["required"] = true
+        },
+        {
+          ["type"] = "component",
+          ["name"] = "srmi",
+          ["title"] = "Star Rail Model Importer",
+          ["version"] = srmi["tag_name"],
+          ["required"] = false
         }
       }
     }
@@ -498,6 +542,8 @@ function v1_addons_is_installed(group_name, addon_name, addon_path, edition)
     return io.open(addon_path .. "/StarRail_Data/Persistent/Audio/AudioPackage/Windows/" .. get_voiceover_folder(addon_name) .. "/VoBanks0.pck", "rb") ~= nil
   elseif group_name == "extra" and addon_name == "jadeite" then
     return io.open(addon_path .. "/jadeite.exe", "rb") ~= nil
+  elseif group_name == "extra" and addon_name == "srmi" then
+    return io.open(addon_path .. "/3dmigoto/3DMigotoLoader.exe", "rb") ~= nil
   end
 
   return false
@@ -510,6 +556,8 @@ function v1_addons_get_version(group_name, addon_name, addon_path, edition)
   if group_name == "voiceovers" then
     version = io.open(addon_path .. "/StarRail_Data/Persistent/Audio/AudioPackage/Windows/" .. get_voiceover_folder(addon_name) .. "/.version", "r")
   elseif group_name == "extra" and addon_name == "jadeite" then
+    version = io.open(addon_path .. "/.version", "r")
+  elseif group_name == "extra" and addon_name == "srmi" then
     version = io.open(addon_path .. "/.version", "r")
   end
 
@@ -561,6 +609,19 @@ function v1_addons_get_download(group_name, addon_name, edition)
         }
       }
     end
+  elseif group_name == "extra" and addon_name == "srmi" then
+    local srmi_download = get_srmi_download()
+
+    return {
+      ["version"] = srmi_download["tag_name"],
+      ["edition"] = edition,
+
+      ["download"] = {
+        ["type"] = "archive",
+        ["size"] = srmi_download["assets"][2]["size"],
+        ["uri"] = srmi_download["assets"][2]["browser_download_url"]
+      }
+    }
   end
 
   return nil
@@ -649,6 +710,32 @@ function v1_addons_get_diff(group_name, addon_name, addon_path, edition)
         }
       end
     end
+  elseif group_name == "extra" and addon_name == "srmi" then
+    local srmi_download = get_srmi_download()
+
+    if compare_versions(installed_version, srmi_download["tag_name"]) ~= -1 then
+      return {
+        ["current_version"] = installed_version,
+        ["latest_version"]  = srmi_download["tag_name"],
+
+        ["edition"] = edition,
+        ["status"]  = "latest"
+      }
+    else
+      local srmi_download = v1_addons_get_download(group_name, addon_name, edition)
+
+      if srmi_download ~= nil then
+        return {
+          ["current_version"] = installed_version,
+          ["latest_version"]  = srmi_download["tag_name"],
+
+          ["edition"] = edition,
+          ["status"]  = "outdated",
+
+          ["diff"] = srmi_download["download"]
+        }
+      end
+    end
   end
 
   return nil
@@ -661,6 +748,10 @@ function v1_addons_get_paths(group_name, addon_name, addon_path, edition)
       addon_path .. "/StarRail_Data/Persistent/Audio/AudioPackage/Windows/" .. get_voiceover_folder(addon_name)
     }
   elseif group_name == "extra" and addon_name == "jadeite" then
+    return {
+      addon_path
+    }
+  elseif group_name == "extra" and addon_name == "srmi" then
     return {
       addon_path
     }
@@ -755,6 +846,9 @@ function v1_addons_diff_transition(group_name, addon_name, addon_path, edition)
   elseif group_name == "extra" and addon_name == "jadeite" then
     file = io.open(addon_path .. "/.version", "w+")
     version = get_jadeite_metadata()["jadeite"]["version"]
+  elseif group_name == "extra" and addon_name == "srmi" then
+    file = io.open(addon_path .. "/.version", "w+")
+    version = get_srmi_download()["tag_name"]
   end
 
   if file ~= nil and version ~= nil then
