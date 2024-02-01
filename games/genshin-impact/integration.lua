@@ -40,6 +40,7 @@ local function social_api(edition)
 end
 
 local fpsunlock_download = nil
+local gimi_download = nil
 
 local function get_fpsunlock_download()
   local uri = "https://codeberg.org/api/v1/repos/mkrsym1/fpsunlock/releases/latest"
@@ -55,6 +56,25 @@ local function get_fpsunlock_download()
   end
 
   return fpsunlock_download
+end
+
+local function get_gimi_download()
+  local uri = "https://api.github.com/repos/SilentNightSound/GI-Model-Importer/releases/latest"
+  local headers = {
+    ["User-Agent"] = "request"
+  }
+
+  if not gimi_download then
+    local response = v1_network_fetch(uri, { ["headers"] = headers })
+
+    if not response["ok"] then
+      error("Failed to request gimi releases (code " .. response["status"] .. "): " .. response["statusText"])
+    end
+
+    gimi_download = response.json()
+  end
+
+  return gimi_download
 end
 
 local function get_hdiff(edition)
@@ -349,10 +369,15 @@ function v1_game_get_launch_options(game_path, addons_path, edition)
 
   local exe = executable[edition]
   local fpsunlock = io.open(addons_path .. "/extra/fpsunlock/fpsunlock.exe", "rb") ~= nil
-  if fpsunlock then
+  local gimi = io.open(addons_path .. "/extra/gimi/3dmigoto/3DMigoto Loader.exe", "rb") ~= nil
+  if fpsunlock or gimi then
     local file = io.open("/tmp/launch.bat", "w+")
 
     file:write("Z:\n")
+    if gimi then
+      file:write('cd "' .. addons_path .. '/extra/gimi/3dmigoto"\n')
+      file:write('start "" "3DMigoto Loader.exe"\n')
+    end
     file:write('cd "' .. game_path .. '"\n')
     file:write("start " .. executable[edition] .. " %*\n")
     if fpsunlock then
@@ -442,6 +467,7 @@ function v1_addons_get_list(edition)
   end
 
   local fpsunlock = get_fpsunlock_download()
+  local gimi = get_gimi_download()
 
   return {
     {
@@ -459,6 +485,13 @@ function v1_addons_get_list(edition)
           ["title"] = "FPS Unlock",
           ["version"] = fpsunlock["tag_name"],
           ["required"] = false
+        },
+        {
+          ["type"] = "component",
+          ["name"] = "gimi",
+          ["title"] = "Genshin Impact Model Importer",
+          ["version"] = gimi["tag_name"],
+          ["required"] = false
         }
       }
     }
@@ -471,6 +504,8 @@ function v1_addons_is_installed(group_name, addon_name, addon_path, edition)
     return io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/1001.pck", "rb") ~= nil
   elseif group_name == "extra" and addon_name == "fpsunlock" then
     return io.open(addon_path .. "/fpsunlock.exe", "rb") ~= nil
+  elseif group_name == "extra" and addon_name == "gimi" then
+    return io.open(addon_path .. "/3dmigoto/3DMigoto Loader.exe", "rb") ~= nil
   end
 
   return false
@@ -483,6 +518,8 @@ function v1_addons_get_version(group_name, addon_name, addon_path, edition)
   if group_name == "voiceovers" then
     version = io.open(addon_path .. "/" .. get_edition_data_folder(edition) .. "/StreamingAssets/AudioAssets/" .. get_voiceover_folder(addon_name) .. "/.version", "r")
   elseif group_name == "extra" and addon_name == "fpsunlock" then
+    version = io.open(addon_path .. "/.version", "r")
+  elseif group_name == "extra" and addon_name == "gimi" then
     version = io.open(addon_path .. "/.version", "r")
   end
 
@@ -529,6 +566,19 @@ function v1_addons_get_download(group_name, addon_name, edition)
         ["type"] = "files",
         ["size"] = fpsunlock_download["assets"][1]["size"],
         ["files"] = files
+      }
+    }
+  elseif group_name == "extra" and addon_name == "gimi" then
+    local gimi_download = get_gimi_download()
+
+    return {
+      ["version"] = gimi_download["tag_name"],
+      ["edition"] = edition,
+
+      ["download"] = {
+        ["type"] = "archive",
+        ["size"] = gimi_download["assets"][2]["size"],
+        ["uri"] = gimi_download["assets"][2]["browser_download_url"]
       }
     }
   end
@@ -619,6 +669,32 @@ function v1_addons_get_diff(group_name, addon_name, addon_path, edition)
         }
       end
     end
+  elseif group_name == "extra" and addon_name == "gimi" then
+    local gimi_download = get_gimi_download()
+
+    if compare_versions(installed_version, gimi_download["tag_name"]) ~= -1 then
+      return {
+        ["current_version"] = installed_version,
+        ["latest_version"] = gimi_download["tag_name"],
+
+        ["edition"] = edition,
+        ["status"] = "latest"
+      }
+    else
+      local gimi_download = v1_addons_get_download(group_name, addon_name, edition)
+
+      if gimi_download ~= nil then
+        return {
+          ["current_version"] = installed_version,
+          ["latest_version"] = gimi_download["tag_name"],
+
+          ["edition"] = edition,
+          ["status"] = "outdated",
+
+          ["diff"] = gimi_download["download"]
+        }
+      end
+    end
   end
 end
 
@@ -630,6 +706,10 @@ function v1_addons_get_paths(group_name, addon_name, addon_path, edition)
       addon_path .. "/Audio_" .. get_voiceover_folder(addon_name) .. "_pkg_version"
     }
   elseif group_name == "extra" and addon_name == "fpsunlock" then
+    return {
+      addon_path
+    }
+  elseif group_name == "extra" and addon_name == "gimi" then
     return {
       addon_path
     }
@@ -753,6 +833,9 @@ function v1_addons_diff_transition(group_name, addon_name, addon_path, edition)
   elseif group_name == "extra" and addon_name == "fpsunlock" then
     file = io.open(addon_path .. "/.version", "w+")
     version = get_fpsunlock_download()["tag_name"]
+  elseif group_name == "extra" and addon_name == "gimi" then
+    file = io.open(addon_path .. "/.version", "w+")
+    version = get_gimi_download()["tag_name"]
   end
 
   if file ~= nil and version ~= nil then
