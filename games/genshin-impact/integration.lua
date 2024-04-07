@@ -391,7 +391,7 @@ function v1_game_get_launch_options(game_path, addons_path, edition)
   return {
     ["executable"]  = exe,
     ["options"]     = {},
-    ["environment"] = { ["ENABLE_VKBASALT"] = "1" }
+    ["environment"] = { ["ENABLE_VKBASALT"] = "1", ["OBS_VKCAPTURE"] = "1" }
   }
 end
 
