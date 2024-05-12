@@ -96,10 +96,6 @@ local function get_srmi_download()
     end
 
     srmi_download = response.json()
-    local _, c = srmi_download["tag_name"]:gsub("%.","")
-    if c < 2 then
-        srmi_download["tag_name"] = srmi_download["tag_name"] .. ".0"
-    end
   end
 
   return srmi_download
