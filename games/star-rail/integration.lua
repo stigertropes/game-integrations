@@ -94,12 +94,12 @@ local function get_srmi_download()
     if not response["ok"] then
       error("Failed to request srmi releases (code " .. response["status"] .. "): " .. response["statusText"])
     end
-    local _, c = response["tag_name"]:gsub("%.","")
-    if c < 2 then
-        response["tag_name"] = response["tag_name"] .. ".0"
-    end
 
     srmi_download = response.json()
+    local _, c = srmi_download["tag_name"]:gsub("%.","")
+    if c < 2 then
+        srmi_download["tag_name"] = srmi_download["tag_name"] .. ".0"
+    end
   end
 
   return srmi_download
